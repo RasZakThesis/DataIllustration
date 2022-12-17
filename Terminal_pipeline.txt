@@ -1,0 +1,85 @@
+############################################
+#Sorting of data
+
+#Create subseq from merged file - Requires text file for each type (File_z.txt)
+seqtk subseq merge_assemblies.fasta File_z.txt > gene_z.fasta
+seqtk subseq merge_assemblies.fasta File_plasmid.txt > gene_plasmid.fasta
+seqtk subseq merge_assemblies.fasta File_chromosomes.txt > gene_chrom.fasta    
+
+#Merge sorted, linear contigs with plasmids
+cat gene_plasmid.fasta gene_z.fasta > merge_plasmids.fasta
+
+
+############################################
+#Protein_clusters for plasmids & chromosomes
+
+#Find open reading frames
+prodigal -i ###.fasta  -a merge_reads_protein.fa -d merge_reads_genes.fa  -p meta
+usearch -cluster_fast merge_reads_genes.fa  -id 0.9 -evalue 0.001 -query_cov 0.90 -target_cov 0.90  -sizeout -consout merge_reads_genes_consensus.fa
+usearch -sortbysize merge_reads_genes_consensus.fa -fastaout consensus_sized.fa -minsize 1
+seqkit sort -l -r consensus_sized.fa -o merge_reads_genes_consensus_sorted.fa ; rm consensus_sized.fa
+
+#Blast genomes against the clusters
+#usearch -ublast  merge_reads_genes.fa  -db merge_reads_genes_consensus_sorted.fa -evalue 1e-3  -id 0.9 -query_cov 0.9 -target_cov 0.9 -blast6out blastout.txt  -threads 6 -strand both -maxhits 1
+#TAB=$'\t'
+#cat blastout.txt | sed 's/.fasta/'"$TAB"'/g' | sed 's/;/'"$TAB"'/g'  | cut -f1,8  > blastout_selected.txt
+
+#Create curated diamond database. http://gensoft.pasteur.fr/docs/diamond/0.8.29/diamond_manual.pdf
+diamond makedb --in database.fasta -d reviewed_database.dmnd
+
+#Blast reads against curated database
+diamond blastx -d reviewed_database.dmnd -q merge_reads_genes_consensus_sorted.fa -o blastout_function.txt  --id 20 --query-cover 90 --subject-cover 90 -p 6 --max-target-seqs 1  --evalue 0.00001
+TAB=$'\t'
+cat blastout_function.txt | sed 's/_/'"$TAB"'/g'  | cut -f1,4  > blastout_function_selected.txt
+
+
+############################################
+#Genemapping_diamond_blast for plasmids & chromosomes
+
+#Find open reading frames
+prodigal -i ###.fasta  -a merge_reads_protein.fa -d merge_reads_genes.fa  -p meta
+
+#Create curated diamond database. http://gensoft.pasteur.fr/docs/diamond/0.8.29/diamond_manual.pdf
+diamond makedb --in database.fasta -d reviewed_database.dmnd
+
+#Blast reads (--id 20 --query-cover 90 --subject-cover 90 plasmids) (--id 20 --query-cover 90 --subject-cover 90 chromosomes)
+diamond blastx -d reviewed_database.dmnd -q merge_reads_genes.fa -o blastout_function.txt  --id 30 --query-cover 90 --subject-cover 90 -p 6 --max-target-seqs 1  --evalue 0.00001
+TAB=$'\t'
+cat blastout_function.txt | sed 's/_/'"$TAB"'/g'  | cut -f1,4  > blastout_function_selected.txt
+
+
+############################################
+#Genemapping_usearch for plasmids & chromosomes
+
+#Find open reading frames
+prodigal -i ###.fasta  -a merge_reads_protein.fa -d merge_reads_genes.fa  -p meta
+
+#Create curated usearch database
+usearch -makeudb_ublast database.fasta -output ublastdb.udb
+
+#Blast reads (-id 0.20 -query_cov 0.9 -target_cov 0.9 plasmids) (-id 0.20 -query_cov 0.9 -target_cov 0.9 chromosomes)
+usearch -ublast  merge_reads_genes.fa  -db ublastdb.udb -evalue 1e-3  -id 0.3 -query_cov 0.9 -target_cov 0.9 -blast6out blastout.txt  -threads 6 -strand both -maxhits 1
+TAB=$'\t'
+cat blastout.txt |  sed 's/_/'"$TAB"'/g'  | cut -f1,9  > blastout_function_selected.txt
+
+
+################################################
+#Padloc can be used to find defense mechanisms from nucleotide sequence. Can also be done from protein sequence (--faa .faa)
+padloc --fna genome.fasta --cpu 4
+
+#Change "_" to "." for col 2 in padloc_ds.tsv.txt in excel
+
+TAB=$'\t'
+cat padloc_ds.tsv.txt | sed 's/_/'"$TAB"'/g'  | cut -f1,3  > padloc_ds1.tsv.txt
+
+#Change "." to "_" for col 2 in padloc_ds1.tsv.txt in excel
+
+
+###########################################
+#RFplasmid can be used to find plasmid/chromosomal assemblies
+rfplasmid --species Generic --input z --jelly --threads 4 --out rfplasmid_z
+
+
+###########################################
+#Defense-finder also finds resistance mechanisms in sequences. Requires .faa file. Use .faa file created from padloc to use defense-finder and compare
+defense-finder run genome.faa
